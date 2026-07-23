@@ -1,70 +1,119 @@
 #ifdef TC_WITH_TFHE
 
 #include <btc/algorithms.hpp>
+#include <btc/graph_io.hpp>
 #include <btc/tfhe_backend.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <fstream>
+#include <string>
+#include <vector>
 
-// 3-node chain: 0->1->2
-// Expected BTC(T=2): [[0,1,1],[0,0,1],[0,0,0]]
-static const int ADJ[8][8] = {
-    {0, 1, 0, 0, 1, 0, 0, 0},
-    {0, 0, 1, 0, 0, 0, 0, 0},
-    {0, 0, 0, 1, 0, 0, 0, 0},
-    {0, 0, 0, 0, 0, 0, 1, 0},
-    {0, 0, 0, 0, 0, 1, 0, 0},
-    {0, 0, 0, 0, 0, 0, 1, 0},
-    {0, 0, 0, 0, 0, 0, 0, 1},
-    {0, 0, 0, 0, 0, 0, 0, 0},
-};
+namespace {
 
-int main() {
-    const std::size_t N = 8;
-    const int T = 2;
+void print_matrix(const btc::BoolMatrix& M) {
+    for (std::size_t i = 0; i < M.rows(); ++i) {
+        for (std::size_t j = 0; j < M.cols(); ++j)
+            std::printf("%d ", M.get(i, j) ? 1 : 0);
+        std::puts("");
+    }
+}
 
-    btc::BoolMatrix plain(N, N, false);
-    for (std::size_t i = 0; i < N; ++i)
-        for (std::size_t j = 0; j < N; ++j)
-            plain.set(i, j, ADJ[i][j] == 1);
+int log2_ceil(std::size_t n) {
+    int t = 0;
+    std::size_t v = 1;
+    while (v < n) { v <<= 1; ++t; }
+    return t < 1 ? 1 : t; // T must be >= 1
+}
 
-    std::puts("Generating keys...");
+std::string timestamp_now() {
+    std::time_t t = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&t));
+    return buf;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    std::vector<std::string> names = {"graph_N4", "graph_N8", "graph_N16"};
+    if (argc > 1) {
+        names = {argv[1]};
+    }
+
+    std::puts("Generating keys (shared across all graphs)...");
     BooleanClientKey* ckey = nullptr;
     BooleanServerKey* skey = nullptr;
     if (boolean_gen_keys_with_default_parameters(&ckey, &skey) != 0) {
         std::fputs("Key generation failed\n", stderr);
         return 1;
     }
-
-    std::puts("Encrypting matrix...");
-    auto enc_A = btc::TFHEBackend::encrypt(plain, ckey);
-
-    std::printf("Running BTC (N=%zu T=%d) under FHE...\n", N, T);
-    auto t0 = std::chrono::high_resolution_clock::now();
     btc::TFHEBackend backend(skey);
-    auto enc_S = btc::bounded_transitive_closure(enc_A, T, backend);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    std::printf("FHE computation: %.1f ms\n\n", ms);
 
-    std::puts("Decrypting result...");
-    auto result = btc::TFHEBackend::decrypt(enc_S, ckey);
-
-    std::puts("Decrypted reachability matrix:");
-    for (std::size_t i = 0; i < N; ++i) {
-        for (std::size_t j = 0; j < N; ++j)
-            std::printf("%d ", result.get(i, j) ? 1 : 0);
-        std::puts("");
+    const std::string csv_path = "data/bench_tfhe_results.csv";
+    bool csv_exists = std::ifstream(csv_path).good();
+    std::ofstream csv(csv_path, std::ios::app);
+    if (!csv_exists) {
+        csv << "timestamp,graph,N,T,fhe_ms,matches_plaintext\n";
     }
 
-    auto plain_S = btc::bounded_transitive_closure(plain, T);
-    bool ok = (result == plain_S);
-    std::printf("\nMatches plaintext: %s\n", ok ? "YES" : "NO");
+    int passed = 0;
+    int failed = 0;
+
+    for (const auto& name : names) {
+        std::string path = "data/" + name + ".txt";
+        btc::BoolMatrix A;
+        try {
+            A = btc::load_graph(path);
+        } catch (const std::exception& e) {
+            std::printf("Skipping %s: %s\n", path.c_str(), e.what());
+            continue;
+        }
+
+        const std::size_t N = A.rows();
+        const int T = log2_ceil(N);
+
+        std::printf("\n=== Graph: %s (N=%zu, T=ceil(log2(N))=%d) ===\n",
+                     name.c_str(), N, T);
+
+        auto plain_S = btc::bounded_transitive_closure(A, T);
+
+        auto enc_A = btc::TFHEBackend::encrypt(A, ckey);
+
+        auto t0 = std::chrono::high_resolution_clock::now();
+        auto enc_S = btc::bounded_transitive_closure(enc_A, T, backend);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+        auto result = btc::TFHEBackend::decrypt(enc_S, ckey);
+        bool ok = (result == plain_S);
+
+        std::printf("  FHE computation: %.1f ms (%.3f s)\n", ms, ms / 1000.0);
+        std::puts("  Decrypted reachability matrix:");
+        print_matrix(result);
+        std::printf("  Matches plaintext validator: %s\n", ok ? "YES" : "NO");
+
+        csv << timestamp_now() << ',' << name << ',' << N << ',' << T << ','
+            << ms << ',' << (ok ? "YES" : "NO") << '\n';
+
+        if (ok) {
+            ++passed;
+        } else {
+            ++failed;
+            std::puts("  Expected:");
+            print_matrix(plain_S);
+        }
+    }
+
+    std::printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
 
     boolean_destroy_client_key(ckey);
     boolean_destroy_server_key(skey);
-    return ok ? 0 : 1;
+    return failed == 0 ? 0 : 1;
 }
 
 #else
