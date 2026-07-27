@@ -1,0 +1,12 @@
+{
+  "lwe_dimension": 805,
+  "glwe_dimension": 3,
+  "polynomial_size": 512,
+  "lwe_noise_distribution": { "gaussian_std_dev": 5.8615896642671336e-06 },
+  "glwe_noise_distribution": { "gaussian_std_dev": 9.315272083503367e-10 },
+  "pbs_base_log": 10,
+  "pbs_level": 2,
+  "ks_base_log": 3,
+  "ks_level": 5,
+  "encryption_key_choice": "small"
+}

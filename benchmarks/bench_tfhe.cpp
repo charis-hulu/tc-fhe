@@ -3,6 +3,7 @@
 #include <btc/algorithms.hpp>
 #include <btc/graph_io.hpp>
 #include <btc/tfhe_backend.hpp>
+#include <btc/tfhe_params_io.hpp>
 
 #include <chrono>
 #include <cmath>
@@ -41,16 +42,35 @@ std::string timestamp_now() {
 
 int main(int argc, char** argv) {
     std::vector<std::string> names = {"graph_N4", "graph_N8", "graph_N16"};
-    if (argc > 1) {
-        names = {argv[1]};
+    std::string params_path;
+    std::string params_label = "default";
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        const std::string prefix = "--params=";
+        if (arg.rfind(prefix, 0) == 0) {
+            params_path = arg.substr(prefix.size());
+        } else {
+            names = {arg};
+        }
     }
 
-    std::puts("Generating keys (shared across all graphs)...");
     BooleanClientKey* ckey = nullptr;
     BooleanServerKey* skey = nullptr;
-    if (boolean_gen_keys_with_default_parameters(&ckey, &skey) != 0) {
-        std::fputs("Key generation failed\n", stderr);
-        return 1;
+    if (!params_path.empty()) {
+        std::printf("Generating keys from %s (shared across all graphs)...\n", params_path.c_str());
+        BooleanParameters params = btc::load_boolean_parameters(params_path);
+        if (boolean_gen_keys_with_parameters(params, &ckey, &skey) != 0) {
+            std::fputs("Key generation failed\n", stderr);
+            return 1;
+        }
+        params_label = params_path;
+    } else {
+        std::puts("Generating keys with default parameters (shared across all graphs)...");
+        if (boolean_gen_keys_with_default_parameters(&ckey, &skey) != 0) {
+            std::fputs("Key generation failed\n", stderr);
+            return 1;
+        }
     }
     btc::TFHEBackend backend(skey);
 
@@ -58,7 +78,7 @@ int main(int argc, char** argv) {
     bool csv_exists = std::ifstream(csv_path).good();
     std::ofstream csv(csv_path, std::ios::app);
     if (!csv_exists) {
-        csv << "timestamp,graph,N,T,fhe_ms,matches_plaintext\n";
+        csv << "timestamp,graph,N,T,fhe_ms,matches_plaintext,params\n";
     }
 
     int passed = 0;
@@ -98,7 +118,7 @@ int main(int argc, char** argv) {
         std::printf("  Matches plaintext validator: %s\n", ok ? "YES" : "NO");
 
         csv << timestamp_now() << ',' << name << ',' << N << ',' << T << ','
-            << ms << ',' << (ok ? "YES" : "NO") << '\n';
+            << ms << ',' << (ok ? "YES" : "NO") << ',' << params_label << '\n';
 
         if (ok) {
             ++passed;
