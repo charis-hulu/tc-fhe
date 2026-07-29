@@ -1,0 +1,27 @@
+=== Test job started on x3005c0s37b1n0 at Wed Jul 29 03:34:07 AM UTC 2026 ===
+N=64  DENSITY=0.2  SEED=2024  TFHE_ROOT=/path/to/tfhe-rs/target/release
+
+Lmod is automatically replacing "nvidia/25.5" with "gcc-native/14".
+
+
+Lmod is automatically replacing "PrgEnv-nvidia/8.6.0" with "PrgEnv-gnu/8.6.0".
+
+
+Due to MODULEPATH changes, the following have been reloaded:
+  1) cray-mpich/9.0.1
+
+Lmod has detected the following error: The following module(s) are unknown:
+"cmake"
+
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "cmake"
+
+Also make sure that all modulefiles written in TCL start with the string
+#%Module
+
+
+
+=== Test job started on x3001c0s7b1n0 at Wed Jul 29 04:08:06 AM UTC 2026 ===
+N=64  DENSITY=0.2  SEED=2024  TFHE_ROOT=/path/to/tfhe-rs/target/release
+/var/spool/pbs/mom_priv/jobs/7299454.polaris-pbs-01.hsn.cm.polaris.alcf.anl.gov.SC: line 36: cmake: command not found

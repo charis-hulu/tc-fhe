@@ -1,0 +1,46 @@
+#!/bin/bash
+#PBS -l select=1:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=00:10:00
+#PBS -q debug-scaling
+#PBS -A UIC-HPC
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+#PBS -o tc-fhe-gpu-test.log
+
+# ---------------------------------------------------------------------------
+# GPU smoke test: 1 Polaris node (4x A100), debug queue, the fixed 8x8 demo
+# graph baked into bench_tfhe_gpu.cpp. Confirms the CUDA build + GPU FHE run
+# work end-to-end before investing in a GPU sweep.
+#
+# Requires a tfhe-rs C API build with the GPU/CUDA feature enabled, e.g.:
+#   cd tfhe-rs && make build_c_api_gpu
+# (a CPU-only libtfhe.a will fail to link: missing fhe_uint2_*/cuda_server_key_* symbols)
+#
+# Submit from the repo root:
+#   qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release scripts/run_polaris_gpu_test.pbs
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+cd "${PBS_O_WORKDIR}"
+
+BUILD_DIR=${BUILD_DIR:-build_gpu}
+CUDA_ROOT=${CUDA_ROOT:-/usr/local/cuda-12.6}
+TFHE_ROOT=${TFHE_ROOT:?"Set TFHE_ROOT to the tfhe-rs C API build dir (contains libtfhe.a and tfhe.h), e.g. qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release ..."}
+
+echo "=== GPU test job started on $(hostname) at $(date) ==="
+echo "TFHE_ROOT=${TFHE_ROOT}  CUDA_ROOT=${CUDA_ROOT}"
+
+echo "--- GPUs visible on this node ---"
+nvidia-smi -L
+
+# --- Configure + build (TFHE-rs GPU backend, one node, 4x A100) ------------
+cmake -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release \
+      -DTC_WITH_TFHE_GPU=ON -DTFHE_ROOT="${TFHE_ROOT}" -DCUDA_ROOT="${CUDA_ROOT}" \
+      -DTC_BUILD_TESTS=OFF -DTC_BUILD_BENCHMARKS=ON
+cmake --build "${BUILD_DIR}" --target bench_tfhe_gpu -j "$(nproc)"
+
+echo "--- Running bench_tfhe_gpu (fixed 8x8 demo graph, T=2) ---"
+"./${BUILD_DIR}/benchmarks/bench_tfhe_gpu"
+
+echo "=== GPU test job finished at $(date) ==="

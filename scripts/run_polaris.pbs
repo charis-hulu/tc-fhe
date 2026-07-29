@@ -1,0 +1,51 @@
+#!/bin/bash
+#PBS -N tc-fhe-sweep
+#PBS -l select=1:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=06:00:00
+#PBS -q debug
+#PBS -A Dist_relational_alg
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+#PBS -o tc-fhe-sweep.log
+
+# ---------------------------------------------------------------------------
+# Runs the bounded transitive closure FHE benchmark (CPU boolean backend) on
+# a single Polaris node, once per graph size N in $N_VALUES.
+#
+# Submit from the repo root:
+#   qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release scripts/run_polaris.pbs
+#
+# Override the N sweep or density via qsub -v, e.g.:
+#   qsub -v TFHE_ROOT=...,N_VALUES="64 128 256",DENSITY=0.1 scripts/run_polaris.pbs
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+cd "${PBS_O_WORKDIR}"
+
+N_VALUES=${N_VALUES:-"64 128 256 512 1024 2048"}
+DENSITY=${DENSITY:-0.2}
+SEED=${SEED:-2024}
+BUILD_DIR=${BUILD_DIR:-build}
+TFHE_ROOT=${TFHE_ROOT:?"Set TFHE_ROOT to the tfhe-rs C API build dir (contains libtfhe.a and tfhe.h), e.g. qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release ..."}
+
+echo "=== Job started on $(hostname) at $(date) ==="
+echo "N_VALUES=${N_VALUES}  DENSITY=${DENSITY}  SEED=${SEED}  TFHE_ROOT=${TFHE_ROOT}"
+
+# --- Configure + build (CPU boolean TFHE backend, one node, no GPU) ---------
+cmake -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release \
+      -DTC_WITH_TFHE=ON -DTFHE_ROOT="${TFHE_ROOT}" \
+      -DTC_BUILD_TESTS=OFF -DTC_BUILD_BENCHMARKS=ON
+cmake --build "${BUILD_DIR}" --target bench_tfhe -j "$(nproc)"
+
+# --- Generate one graph per N, then run the FHE benchmark on each ----------
+for N in ${N_VALUES}; do
+    echo "--- Generating graph_N${N} (density=${DENSITY}, seed=${SEED}) ---"
+    python3 scripts/gen_graph.py "${N}" --density "${DENSITY}" --seed "${SEED}" --out-dir data
+
+    echo "--- Running bench_tfhe for N=${N} ---"
+    "./${BUILD_DIR}/benchmarks/bench_tfhe" "graph_N${N}"
+done
+
+echo "=== Job finished at $(date) ==="
+echo "Results appended to data/bench_tfhe_results.csv"

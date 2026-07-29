@@ -24,11 +24,12 @@ void print_matrix(const btc::BoolMatrix& M) {
     }
 }
 
-int log2_ceil(std::size_t n) {
-    int t = 0;
-    std::size_t v = 1;
-    while (v < n) { v <<= 1; ++t; }
-    return t < 1 ? 1 : t; // T must be >= 1
+// Full transitive closure needs T = N-1 hops (longest simple path in an
+// N-node graph has N-1 edges) -- see the correctness note in algorithms.hpp.
+// The recursive algorithm is O(log T) matmuls regardless of T's value, so
+// this costs no more than an artificially small T would.
+int full_closure_T(std::size_t n) {
+    return n > 1 ? static_cast<int>(n) - 1 : 1; // T must be >= 1
 }
 
 std::string timestamp_now() {
@@ -95,9 +96,9 @@ int main(int argc, char** argv) {
         }
 
         const std::size_t N = A.rows();
-        const int T = log2_ceil(N);
+        const int T = full_closure_T(N);
 
-        std::printf("\n=== Graph: %s (N=%zu, T=ceil(log2(N))=%d) ===\n",
+        std::printf("\n=== Graph: %s (N=%zu, T=N-1=%d) ===\n",
                      name.c_str(), N, T);
 
         auto plain_S = btc::bounded_transitive_closure(A, T);
