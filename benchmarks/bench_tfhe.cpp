@@ -6,13 +6,11 @@
 #include <btc/tfhe_params_io.hpp>
 
 #include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <string>
-#include <vector>
 
 namespace {
 
@@ -24,12 +22,12 @@ void print_matrix(const btc::BoolMatrix& M) {
     }
 }
 
-// Full transitive closure needs T = N-1 hops (longest simple path in an
-// N-node graph has N-1 edges) -- see the correctness note in algorithms.hpp.
+// Full transitive closure needs T = N hops (simple paths are <= N-1 edges,
+// simple cycles are <= N) -- see the correctness note in algorithms.hpp.
 // The recursive algorithm is O(log T) matmuls regardless of T's value, so
 // this costs no more than an artificially small T would.
 int full_closure_T(std::size_t n) {
-    return n > 1 ? static_cast<int>(n) - 1 : 1; // T must be >= 1
+    return n >= 1 ? static_cast<int>(n) : 1; // T must be >= 1
 }
 
 std::string timestamp_now() {
@@ -42,7 +40,7 @@ std::string timestamp_now() {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::vector<std::string> names = {"graph_N4", "graph_N8", "graph_N16"};
+    std::string graph_name;
     std::string params_path;
     std::string params_label = "default";
 
@@ -52,14 +50,28 @@ int main(int argc, char** argv) {
         if (arg.rfind(prefix, 0) == 0) {
             params_path = arg.substr(prefix.size());
         } else {
-            names = {arg};
+            graph_name = arg;
         }
+    }
+
+    if (graph_name.empty()) {
+        std::fputs("Usage: bench_tfhe <graph_name> [--params=<path>]\n", stderr);
+        return 1;
+    }
+
+    std::string path = "data/" + graph_name + ".txt";
+    btc::BoolMatrix A;
+    try {
+        A = btc::load_graph(path);
+    } catch (const std::exception& e) {
+        std::printf("Failed to load %s: %s\n", path.c_str(), e.what());
+        return 1;
     }
 
     BooleanClientKey* ckey = nullptr;
     BooleanServerKey* skey = nullptr;
     if (!params_path.empty()) {
-        std::printf("Generating keys from %s (shared across all graphs)...\n", params_path.c_str());
+        std::printf("Generating keys from %s...\n", params_path.c_str());
         BooleanParameters params = btc::load_boolean_parameters(params_path);
         if (boolean_gen_keys_with_parameters(params, &ckey, &skey) != 0) {
             std::fputs("Key generation failed\n", stderr);
@@ -67,7 +79,7 @@ int main(int argc, char** argv) {
         }
         params_label = params_path;
     } else {
-        std::puts("Generating keys with default parameters (shared across all graphs)...");
+        std::puts("Generating keys with default parameters...");
         if (boolean_gen_keys_with_default_parameters(&ckey, &skey) != 0) {
             std::fputs("Key generation failed\n", stderr);
             return 1;
@@ -75,66 +87,54 @@ int main(int argc, char** argv) {
     }
     btc::TFHEBackend backend(skey);
 
+    const std::size_t N = A.rows();
+    const int T = full_closure_T(N);
+
+    std::printf("=== Graph: %s (N=%zu, T=N=%d) ===\n", graph_name.c_str(), N, T);
+
+    auto plain_S = btc::bounded_transitive_closure(A, T);
+    auto ground_truth = btc::floyd_warshall(A);
+
+    auto enc_A = btc::TFHEBackend::encrypt(A, ckey);
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    auto enc_S = btc::bounded_transitive_closure(enc_A, T, backend);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    auto result = btc::TFHEBackend::decrypt(enc_S, ckey);
+    bool matches_plaintext = (result == plain_S);
+    bool matches_ground_truth = (result == ground_truth);
+    bool ok = matches_plaintext && matches_ground_truth;
+
+    std::printf("  FHE computation: %.1f ms (%.3f s)\n", ms, ms / 1000.0);
+    std::puts("  Decrypted reachability matrix:");
+    print_matrix(result);
+    std::printf("  Matches plaintext validator: %s\n", matches_plaintext ? "YES" : "NO");
+    std::printf("  Matches ground truth (Floyd-Warshall): %s\n", matches_ground_truth ? "YES" : "NO");
+
+    if (!matches_plaintext) {
+        std::puts("  Expected (plaintext BTC):");
+        print_matrix(plain_S);
+    }
+    if (!matches_ground_truth) {
+        std::puts("  Expected (Floyd-Warshall ground truth):");
+        print_matrix(ground_truth);
+    }
+
     const std::string csv_path = "data/bench_tfhe_results.csv";
     bool csv_exists = std::ifstream(csv_path).good();
     std::ofstream csv(csv_path, std::ios::app);
     if (!csv_exists) {
-        csv << "timestamp,graph,N,T,fhe_ms,matches_plaintext,params\n";
+        csv << "timestamp,graph,N,T,fhe_ms,matches_plaintext,matches_ground_truth,params\n";
     }
-
-    int passed = 0;
-    int failed = 0;
-
-    for (const auto& name : names) {
-        std::string path = "data/" + name + ".txt";
-        btc::BoolMatrix A;
-        try {
-            A = btc::load_graph(path);
-        } catch (const std::exception& e) {
-            std::printf("Skipping %s: %s\n", path.c_str(), e.what());
-            continue;
-        }
-
-        const std::size_t N = A.rows();
-        const int T = full_closure_T(N);
-
-        std::printf("\n=== Graph: %s (N=%zu, T=N-1=%d) ===\n",
-                     name.c_str(), N, T);
-
-        auto plain_S = btc::bounded_transitive_closure(A, T);
-
-        auto enc_A = btc::TFHEBackend::encrypt(A, ckey);
-
-        auto t0 = std::chrono::high_resolution_clock::now();
-        auto enc_S = btc::bounded_transitive_closure(enc_A, T, backend);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-
-        auto result = btc::TFHEBackend::decrypt(enc_S, ckey);
-        bool ok = (result == plain_S);
-
-        std::printf("  FHE computation: %.1f ms (%.3f s)\n", ms, ms / 1000.0);
-        std::puts("  Decrypted reachability matrix:");
-        print_matrix(result);
-        std::printf("  Matches plaintext validator: %s\n", ok ? "YES" : "NO");
-
-        csv << timestamp_now() << ',' << name << ',' << N << ',' << T << ','
-            << ms << ',' << (ok ? "YES" : "NO") << ',' << params_label << '\n';
-
-        if (ok) {
-            ++passed;
-        } else {
-            ++failed;
-            std::puts("  Expected:");
-            print_matrix(plain_S);
-        }
-    }
-
-    std::printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
+    csv << timestamp_now() << ',' << graph_name << ',' << N << ',' << T << ','
+        << ms << ',' << (matches_plaintext ? "YES" : "NO") << ','
+        << (matches_ground_truth ? "YES" : "NO") << ',' << params_label << '\n';
 
     boolean_destroy_client_key(ckey);
     boolean_destroy_server_key(skey);
-    return failed == 0 ? 0 : 1;
+    return ok ? 0 : 1;
 }
 
 #else

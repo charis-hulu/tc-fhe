@@ -1,6 +1,2 @@
-timestamp,graph,N,T,fhe_ms,matches_plaintext
-2026-07-22 00:00:00,graph_N16,16,4,559196.2,YES
-2026-07-22 22:20:38,graph_N4,4,2,3154.68,YES
-2026-07-22 22:21:24,graph_N8,8,3,36750.9,YES
-2026-07-26 16:01:18,graph_N4,4,2,2379.11,YES,data/tfhe_params/default_parameters.json
-2026-07-26 16:25:57,graph_N8,8,3,51362.5,YES,data/tfhe_params/default_parameters.json
+2026-07-30 18:09:49,graph_N8,8,8,61442.8,YES,YES,default
+2026-07-30 18:20:44,graph_N16,16,16,654422,YES,YES,default

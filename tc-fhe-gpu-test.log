@@ -22,3 +22,50 @@ Also make sure that all modulefiles written in TCL start with the string
 
 
 
+=== GPU test job started on x3003c0s25b0n0 at Thu Jul 30 07:49:15 PM UTC 2026 ===
+N=32  DENSITY=0.2  SEED=2024  BUILD_DIR=build_gpu
+--- GPUs visible on this node ---
+GPU 0: NVIDIA A100-SXM4-40GB (UUID: GPU-03cc1a4c-c7f4-7b62-a199-834f482b4260)
+GPU 1: NVIDIA A100-SXM4-40GB (UUID: GPU-594492b4-b4b2-f9f9-c99d-53218d536b43)
+GPU 2: NVIDIA A100-SXM4-40GB (UUID: GPU-3e268b8d-a6ec-04ac-4e7a-b25c9dfbe89a)
+GPU 3: NVIDIA A100-SXM4-40GB (UUID: GPU-ff0f20d6-0f9f-74c4-95f8-963ac5f0f3eb)
+--- Generating graph_N32 (density=0.2, seed=2024) ---
+Wrote data/graph_N32.txt (N=32, density=0.2, seed=2024)
+--- Running bench_tfhe_gpu for N=32 ---
+./build_gpu/benchmarks/bench_tfhe_gpu: error while loading shared libraries: libcudart.so.12: cannot open shared object file: No such file or directory
+Lmod has detected the following error: These module(s) or extension(s) exist
+but cannot be loaded as requested: "cudatoolkit-standalone"
+   Try: "module spider cudatoolkit-standalone" to see how to load the
+module(s).
+
+
+
+=== GPU test job started on x3207c0s37b0n0 at Thu Jul 30 07:56:24 PM UTC 2026 ===
+N=32  DENSITY=0.2  SEED=2024  BUILD_DIR=build_gpu
+--- GPUs visible on this node ---
+GPU 0: NVIDIA A100-SXM4-40GB (UUID: GPU-56fe749b-4ea1-771e-c799-da0bc1081938)
+GPU 1: NVIDIA A100-SXM4-40GB (UUID: GPU-7631c031-a5f5-9e5a-8b4b-dc784a36399a)
+GPU 2: NVIDIA A100-SXM4-40GB (UUID: GPU-96698b47-fadb-bb4c-b7b6-4c8e815cf161)
+GPU 3: NVIDIA A100-SXM4-40GB (UUID: GPU-08d05172-6eb7-eaf5-5a1f-4f5f0413486f)
+--- Generating graph_N32 (density=0.2, seed=2024) ---
+Wrote data/graph_N32.txt (N=32, density=0.2, seed=2024)
+--- Running bench_tfhe_gpu for N=32 ---
+./build_gpu/benchmarks/bench_tfhe_gpu: error while loading shared libraries: libcudart.so.12: cannot open shared object file: No such file or directory
+Lmod has detected the following error: These module(s) or extension(s) exist
+but cannot be loaded as requested: "cudatoolkit-standalone/12.2.2"
+   Try: "module spider cudatoolkit-standalone/12.2.2" to see how to load the
+module(s).
+
+
+
+=== GPU test job started on x3002c0s7b1n0 at Thu Jul 30 08:03:37 PM UTC 2026 ===
+N=32  DENSITY=0.2  SEED=2024  BUILD_DIR=build_gpu
+--- GPUs visible on this node ---
+GPU 0: NVIDIA A100-SXM4-40GB (UUID: GPU-071f0980-31e6-e536-4a7f-ebf356f15845)
+GPU 1: NVIDIA A100-SXM4-40GB (UUID: GPU-ab0a7ea0-83ef-39ac-5a73-fd2a755ec8a4)
+GPU 2: NVIDIA A100-SXM4-40GB (UUID: GPU-0faba262-b725-eadc-72fd-e6ab2a3fca1e)
+GPU 3: NVIDIA A100-SXM4-40GB (UUID: GPU-c7d18c3e-329c-3519-e93d-c7b51f3ccb61)
+--- Generating graph_N32 (density=0.2, seed=2024) ---
+Wrote data/graph_N32.txt (N=32, density=0.2, seed=2024)
+--- Running bench_tfhe_gpu for N=32 ---
+=>> PBS: job killed: walltime 3626 exceeded limit 3600

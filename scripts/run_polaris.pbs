@@ -1,42 +1,40 @@
 #!/bin/bash
-#PBS -N tc-fhe-sweep
 #PBS -l select=1:system=polaris
 #PBS -l place=scatter
-#PBS -l walltime=06:00:00
+#PBS -l walltime=01:00:00
 #PBS -q debug
-#PBS -A Dist_relational_alg
+#PBS -A UIC-HPC
 #PBS -l filesystems=home:eagle
 #PBS -j oe
-#PBS -o tc-fhe-sweep.log
+#PBS -o tc-fhe-test.log
 
 # ---------------------------------------------------------------------------
 # Runs the bounded transitive closure FHE benchmark (CPU boolean backend) on
 # a single Polaris node, once per graph size N in $N_VALUES.
 #
-# Submit from the repo root:
-#   qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release scripts/run_polaris.pbs
+# Build on the login node first (compute nodes don't have cmake on PATH):
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DTC_WITH_TFHE=ON \
+#         -DTFHE_ROOT=/path/to/tfhe-rs/target/release \
+#         -DTC_BUILD_TESTS=OFF -DTC_BUILD_BENCHMARKS=ON
+#   cmake --build build --target bench_tfhe -j "$(nproc)"
+#
+# Then submit from the repo root:
+#   qsub scripts/run_polaris.pbs
 #
 # Override the N sweep or density via qsub -v, e.g.:
-#   qsub -v TFHE_ROOT=...,N_VALUES="64 128 256",DENSITY=0.1 scripts/run_polaris.pbs
+#   qsub -v N_VALUES="64 128 256",DENSITY=0.1 scripts/run_polaris.pbs
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 cd "${PBS_O_WORKDIR}"
 
-N_VALUES=${N_VALUES:-"64 128 256 512 1024 2048"}
+N_VALUES=${N_VALUES:-"8 16 32"}
 DENSITY=${DENSITY:-0.2}
 SEED=${SEED:-2024}
 BUILD_DIR=${BUILD_DIR:-build}
-TFHE_ROOT=${TFHE_ROOT:?"Set TFHE_ROOT to the tfhe-rs C API build dir (contains libtfhe.a and tfhe.h), e.g. qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release ..."}
 
 echo "=== Job started on $(hostname) at $(date) ==="
-echo "N_VALUES=${N_VALUES}  DENSITY=${DENSITY}  SEED=${SEED}  TFHE_ROOT=${TFHE_ROOT}"
-
-# --- Configure + build (CPU boolean TFHE backend, one node, no GPU) ---------
-cmake -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release \
-      -DTC_WITH_TFHE=ON -DTFHE_ROOT="${TFHE_ROOT}" \
-      -DTC_BUILD_TESTS=OFF -DTC_BUILD_BENCHMARKS=ON
-cmake --build "${BUILD_DIR}" --target bench_tfhe -j "$(nproc)"
+echo "N_VALUES=${N_VALUES}  DENSITY=${DENSITY}  SEED=${SEED}  BUILD_DIR=${BUILD_DIR}"
 
 # --- Generate one graph per N, then run the FHE benchmark on each ----------
 for N in ${N_VALUES}; do

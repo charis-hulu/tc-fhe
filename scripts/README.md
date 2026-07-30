@@ -1,62 +1,108 @@
 # Polaris job scripts
 
 Run the bounded transitive closure FHE benchmark on a single Polaris compute
-node — CPU boolean backend (sweeping graph size N) or GPU backend (4x A100,
-fixed demo graph, smoke test only for now).
+node — CPU boolean backend or GPU backend (4x A100), sweeping graph size N.
 
 ## Files
 
 - `gen_graph.py` — generates `data/graph_N{N}.txt` for an arbitrary N (random
   directed graph, no self-loops). Same format/defaults as `benchmarks/gen_graphs.cpp`
   but not limited to {4, 8, 16}.
+- `build_tfhe_rs.sh` — builds tfhe-rs' C API with only the features tc-fhe
+  needs (`boolean-c-api,shortint` for CPU). Slow (the `tfhe` crate takes a
+  long time to compile) — run once, and only again if tfhe-rs itself changes.
+  Run inside `tmux`/`screen`: an SSH disconnect SIGHUPs a foreground build.
+- `build_tc_fhe.sh` — builds `bench_tfhe` (CPU) against an already-built
+  tfhe-rs C API. Fast — run this for every rebuild after editing tc-fhe's own
+  CPU code.
+- `build_tc_fhe_gpu.sh` — same, but for `bench_tfhe_gpu` against a GPU-feature
+  tfhe-rs build.
 - `run_polaris_test.pbs` — CPU smoke test: 1 Polaris node, debug queue, a
-  single small N (default 64), 10 min walltime. Run this first to confirm the
-  CPU build and FHE run work end-to-end before submitting the full sweep.
-- `run_polaris.pbs` — PBS job: requests 1 Polaris node, builds `bench_tfhe`
-  with `TC_WITH_TFHE=ON`, generates a graph and runs the benchmark for each N
-  in the sweep.
+  single small N (default 32). Run this first to confirm the build and FHE
+  run work end-to-end before submitting the full sweep.
+- `run_polaris.pbs` — PBS job: requests 1 Polaris node, generates a graph and
+  runs `bench_tfhe` for each N in the sweep.
 - `run_polaris_gpu_test.pbs` — GPU smoke test: 1 Polaris node (4x A100), debug
-  queue, builds `bench_tfhe_gpu` with `TC_WITH_TFHE_GPU=ON` and runs it against
-  the fixed 8x8 demo graph baked into `benchmarks/bench_tfhe_gpu.cpp`. Requires
-  a tfhe-rs C API build with the GPU/CUDA feature enabled — a CPU-only
-  `libtfhe.a` will fail to link. There is no GPU sweep script yet (the GPU
-  benchmark doesn't read `graph_N{N}` files like `bench_tfhe` does).
+  queue, generates a graph and runs `bench_tfhe_gpu` against it. There's no
+  dedicated GPU sweep script yet, but `bench_tfhe_gpu` takes a graph name the
+  same way `bench_tfhe` does, so `run_polaris.pbs`'s sweep pattern (loop +
+  `qsub -v N_VALUES=...`) applies equally if you build a GPU sweep script from it.
+
+## Build
+
+Build tfhe-rs' C API once (on the login node, inside tmux — see
+`build_tfhe_rs.sh` for why):
+
+```bash
+tmux new -s tfhe-build
+scripts/build_tfhe_rs.sh          # CPU: ~/tfhe-rs by default
+
+# or, for the GPU backend (separate clone + feature set):
+git clone https://github.com/zama-ai/tfhe-rs.git ~/tfhe-rs-gpu
+source set_env.sh                    # cc must resolve to gcc, not NVIDIA's nvc
+module load cudatoolkit-standalone    # load AFTER set_env.sh, for nvcc
+TFHE_RS_DIR=~/tfhe-rs-gpu FEATURES=high-level-c-api,gpu scripts/build_tfhe_rs.sh
+```
+
+Then build tc-fhe itself (fast, rerun any time after editing source):
+
+```bash
+scripts/build_tc_fhe.sh        # CPU -> build/
+scripts/build_tc_fhe_gpu.sh    # GPU -> build_gpu/ (uses ~/tfhe-rs-gpu by default)
+```
+
+Job scripts below assume these builds already exist — they don't build
+anything themselves, so `qsub` doesn't need `-v TFHE_ROOT=...` any more.
+
+GPU build gotchas already handled by the scripts above (see comments in
+`build_tfhe_rs.sh` for details) if you ever need to redo this by hand:
+tfhe-cuda-backend can't find CUDA via `pkg-config` on Polaris and falls back
+to a hardcoded path that doesn't exist here, so `LIBRARY_PATH` is pointed at
+the real `libcudart` location; and a failed first attempt (e.g. before
+`cudatoolkit-standalone` was loaded) leaves a stale CMake cache that needs
+clearing (`rm -rf ~/tfhe-rs-gpu/target/release/build/tfhe-cuda-common-*`)
+before CUDA will be re-detected.
 
 ## Quick test (debug queue, single job)
 
 ```bash
-qsub -A Dist_relational_alg -v TFHE_ROOT=/path/to/tfhe-rs/target/release scripts/run_polaris_test.pbs
+qsub scripts/run_polaris_test.pbs
 ```
 
-Runs one N=64 graph on the debug queue with a 30-minute walltime cap. Override
-the size with `-v TFHE_ROOT=...,N=32`. Check `tc-fhe-test.log` for output and
-timing before submitting the full sweep below.
+Runs one N=32 graph on the debug queue. Override the size (or density/seed)
+via `-v`:
+
+```bash
+qsub -v N=64,DENSITY=0.1,SEED=42 scripts/run_polaris_test.pbs
+```
+
+Check `tc-fhe-test.log` for output and timing before submitting the full
+sweep below.
 
 ## Full sweep
 
-You need a local build of [tfhe-rs](https://github.com/zama-ai/tfhe-rs)'s C API
-(`make build_c_api`) on Polaris first — point `TFHE_ROOT` at the directory
-containing `libtfhe.a` and `tfhe.h`.
-
 ```bash
-qsub -A Dist_relational_alg -v TFHE_ROOT=/path/to/tfhe-rs/target/release scripts/run_polaris.pbs
+qsub scripts/run_polaris.pbs
 ```
 
 Override the N sweep, edge density, or seed via `-v`:
 
 ```bash
-qsub -A Dist_relational_alg \
-     -v TFHE_ROOT=/path/to/tfhe-rs/target/release,N_VALUES="64 128 256",DENSITY=0.1 \
-     scripts/run_polaris.pbs
+qsub -v N_VALUES="64 128 256",DENSITY=0.1 scripts/run_polaris.pbs
 ```
 
-Default sweep: `N_VALUES="64 128 256 512 1024 2048"`, `DENSITY=0.2`, `SEED=2024`.
+Default sweep: `N_VALUES="8 16 32"`, `DENSITY=0.2`, `SEED=2024`.
 
 ## Output
 
 - Per-N console output is captured in `tc-fhe-sweep.log` (job stdout/stderr).
-- Timing results are appended to `data/bench_tfhe_results.csv` (one row per N),
-  which `benchmarks/plot_bench_tfhe.py` can plot directly:
+- Timing results are appended to `data/bench_tfhe_results.csv` (one row per N):
+  `timestamp,graph,N,T,fhe_ms,matches_plaintext,matches_ground_truth,params`.
+  `matches_plaintext` checks the FHE result against a plaintext run of the
+  same bounded-closure algorithm (validates the FHE arithmetic);
+  `matches_ground_truth` checks it against `floyd_warshall` (validates T is
+  large enough for correctness — see the note in `include/btc/algorithms.hpp`).
+  Plot it with:
 
   ```bash
   python3 benchmarks/plot_bench_tfhe.py data/bench_tfhe_results.csv sweep.png
@@ -65,24 +111,31 @@ Default sweep: `N_VALUES="64 128 256 512 1024 2048"`, `DENSITY=0.2`, `SEED=2024`
 ## GPU smoke test
 
 ```bash
-qsub -A Dist_relational_alg -v TFHE_ROOT=/path/to/tfhe-rs-gpu/target/release scripts/run_polaris_gpu_test.pbs
+qsub scripts/run_polaris_gpu_test.pbs
 ```
 
-Builds and runs `bench_tfhe_gpu` (fixed 8x8 graph, T=2) on one Polaris node's
-A100s. Check `tc-fhe-gpu-test.log` for `nvidia-smi -L` output and timing.
-Override `CUDA_ROOT` via `-v` if the default (`/usr/local/cuda-12.6`) doesn't
-match the loaded `cudatoolkit-standalone` module.
+Override the test size the same way as the CPU test:
+
+```bash
+qsub -v N=32 scripts/run_polaris_gpu_test.pbs
+```
+
+Default: N=8, density 0.2, seed 2024. Check `tc-fhe-gpu-test.log` for
+`nvidia-smi -L` output and timing; results are appended to
+`data/bench_tfhe_gpu_results.csv` with the same schema as the CPU CSV above.
+`build_tc_fhe_gpu.sh` defaults `CUDA_ROOT` to
+`/soft/compilers/cudatoolkit/cuda-12.2.2` (Polaris' `cudatoolkit-standalone`
+module) — override via env var if a different version is loaded.
 
 ## Notes
 
 - `run_polaris.pbs` / `run_polaris_test.pbs` target the CPU boolean backend
   (`bench_tfhe`) — Polaris GPUs aren't used. One PBS job = one Polaris node,
-  one FHE benchmark process, run serially across the requested N values.
-- FHE cost grows fast with N (O(log T) boolean matmuls, each O(N^3) encrypted
-  gate evaluations), so `walltime` in `run_polaris.pbs` may need raising for
-  the larger N values (1024, 2048) — check `tc-fhe-sweep.log` timing and
-  adjust `#PBS -l walltime=` accordingly.
-- The GPU path (`run_polaris_gpu_test.pbs`) is a smoke test only: it always
-  runs the same fixed 8x8 graph, since `bench_tfhe_gpu.cpp` doesn't yet accept
-  a `graph_N{N}` argument the way `bench_tfhe.cpp` does. A GPU sweep script
-  would need that support added first.
+  one FHE benchmark process per N, run serially across the requested N values.
+- FHE cost grows fast with N (`O(N^3 log N)` encrypted gate evaluations —
+  `O(log N)` boolean matmuls, each `O(N^3)`), so `walltime` in
+  `run_polaris.pbs` may need raising for larger N values — check
+  `tc-fhe-sweep.log` timing and adjust `#PBS -l walltime=` accordingly.
+- `T` is always `N` (not `N-1`): any directed graph needs up to `N` hops to
+  reach its full transitive closure once cycles are possible (simple paths
+  are bounded by `N-1`, simple cycles by `N`) — see `include/btc/algorithms.hpp`.

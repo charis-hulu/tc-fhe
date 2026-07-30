@@ -1,7 +1,7 @@
-#!/bin/bash
+#!/bin/bash -l
 #PBS -l select=1:system=polaris
 #PBS -l place=scatter
-#PBS -l walltime=00:10:00
+#PBS -l walltime=01:00:00
 #PBS -q debug-scaling
 #PBS -A UIC-HPC
 #PBS -l filesystems=home:eagle
@@ -9,38 +9,52 @@
 #PBS -o tc-fhe-gpu-test.log
 
 # ---------------------------------------------------------------------------
-# GPU smoke test: 1 Polaris node (4x A100), debug queue, the fixed 8x8 demo
-# graph baked into bench_tfhe_gpu.cpp. Confirms the CUDA build + GPU FHE run
-# work end-to-end before investing in a GPU sweep.
+# GPU smoke test: 1 Polaris node (4x A100), debug queue, a single small graph
+# size. Confirms the CUDA build + GPU FHE run work end-to-end before
+# investing in a GPU sweep.
 #
-# Requires a tfhe-rs C API build with the GPU/CUDA feature enabled, e.g.:
-#   cd tfhe-rs && make build_c_api_gpu
-# (a CPU-only libtfhe.a will fail to link: missing fhe_uint2_*/cuda_server_key_* symbols)
+# Build on the login node first (compute nodes don't have cmake on PATH).
+# tfhe-rs' GPU C API needs a separate clone + feature set from the CPU build:
+#   git clone https://github.com/zama-ai/tfhe-rs.git ~/tfhe-rs-gpu
+#   source set_env.sh                    # gcc, not nvc -- see build_tfhe_rs.sh
+#   module load cudatoolkit-standalone    # load AFTER set_env.sh, for nvcc
+#   TFHE_RS_DIR=~/tfhe-rs-gpu FEATURES=high-level-c-api,gpu scripts/build_tfhe_rs.sh
+#   scripts/build_tc_fhe_gpu.sh
 #
-# Submit from the repo root:
-#   qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release scripts/run_polaris_gpu_test.pbs
+# Then submit from the repo root:
+#   qsub scripts/run_polaris_gpu_test.pbs
+#
+# Override the test size via qsub -v, e.g.:
+#   qsub -v N=32 scripts/run_polaris_gpu_test.pbs
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 cd "${PBS_O_WORKDIR}"
 
+N=${N:-32}
+DENSITY=${DENSITY:-0.2}
+SEED=${SEED:-2024}
 BUILD_DIR=${BUILD_DIR:-build_gpu}
-CUDA_ROOT=${CUDA_ROOT:-/usr/local/cuda-12.6}
-TFHE_ROOT=${TFHE_ROOT:?"Set TFHE_ROOT to the tfhe-rs C API build dir (contains libtfhe.a and tfhe.h), e.g. qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release ..."}
+
+# bench_tfhe_gpu is dynamically linked against libcudart.so.12 -- the compute
+# node needs the CUDA runtime on LD_LIBRARY_PATH to load it. `module use` is
+# required first: cudatoolkit-standalone lives under /soft/modulefiles, which
+# isn't on this node's default MODULEPATH (same reason cmake was "unknown"
+# until set_env.sh added it, back when we first debugged the CPU build).
+module use /soft/modulefiles
+module load cudatoolkit-standalone/12.2.2
 
 echo "=== GPU test job started on $(hostname) at $(date) ==="
-echo "TFHE_ROOT=${TFHE_ROOT}  CUDA_ROOT=${CUDA_ROOT}"
+echo "N=${N}  DENSITY=${DENSITY}  SEED=${SEED}  BUILD_DIR=${BUILD_DIR}"
 
 echo "--- GPUs visible on this node ---"
 nvidia-smi -L
 
-# --- Configure + build (TFHE-rs GPU backend, one node, 4x A100) ------------
-cmake -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release \
-      -DTC_WITH_TFHE_GPU=ON -DTFHE_ROOT="${TFHE_ROOT}" -DCUDA_ROOT="${CUDA_ROOT}" \
-      -DTC_BUILD_TESTS=OFF -DTC_BUILD_BENCHMARKS=ON
-cmake --build "${BUILD_DIR}" --target bench_tfhe_gpu -j "$(nproc)"
+echo "--- Generating graph_N${N} (density=${DENSITY}, seed=${SEED}) ---"
+python3 scripts/gen_graph.py "${N}" --density "${DENSITY}" --seed "${SEED}" --out-dir data
 
-echo "--- Running bench_tfhe_gpu (fixed 8x8 demo graph, T=2) ---"
-"./${BUILD_DIR}/benchmarks/bench_tfhe_gpu"
+echo "--- Running bench_tfhe_gpu for N=${N} ---"
+"./${BUILD_DIR}/benchmarks/bench_tfhe_gpu" "graph_N${N}"
 
 echo "=== GPU test job finished at $(date) ==="
+echo "Result appended to data/bench_tfhe_gpu_results.csv"

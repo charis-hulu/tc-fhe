@@ -1,7 +1,7 @@
 #!/bin/bash
 #PBS -l select=1:system=polaris
 #PBS -l place=scatter
-#PBS -l walltime=00:10:00
+#PBS -l walltime=00:40:00
 #PBS -q debug
 #PBS -A UIC-HPC
 #PBS -l filesystems=home:eagle
@@ -13,30 +13,29 @@
 # Use this to confirm the build + FHE run work end-to-end before submitting
 # the full sweep in run_polaris.pbs.
 #
-# Submit from the repo root:
-#   qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release scripts/run_polaris_test.pbs
+# Build on the login node first (compute nodes don't have cmake on PATH):
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DTC_WITH_TFHE=ON \
+#         -DTFHE_ROOT=/path/to/tfhe-rs/target/release \
+#         -DTC_BUILD_TESTS=OFF -DTC_BUILD_BENCHMARKS=ON
+#   cmake --build build --target bench_tfhe -j "$(nproc)"
+#
+# Then submit from the repo root:
+#   qsub scripts/run_polaris_test.pbs
 #
 # Override the test size via qsub -v, e.g.:
-#   qsub -v TFHE_ROOT=...,N=32 scripts/run_polaris_test.pbs
+#   qsub -v N=32 scripts/run_polaris_test.pbs
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 cd "${PBS_O_WORKDIR}"
 
-N=${N:-64}
+N=${N:-32}
 DENSITY=${DENSITY:-0.2}
 SEED=${SEED:-2024}
 BUILD_DIR=${BUILD_DIR:-build}
-TFHE_ROOT=${TFHE_ROOT:?"Set TFHE_ROOT to the tfhe-rs C API build dir (contains libtfhe.a and tfhe.h), e.g. qsub -v TFHE_ROOT=/path/to/tfhe-rs/target/release ..."}
 
 echo "=== Test job started on $(hostname) at $(date) ==="
-echo "N=${N}  DENSITY=${DENSITY}  SEED=${SEED}  TFHE_ROOT=${TFHE_ROOT}"
-
-# --- Configure + build (CPU boolean TFHE backend, one node, no GPU) ---------
-cmake -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release \
-      -DTC_WITH_TFHE=ON -DTFHE_ROOT="${TFHE_ROOT}" \
-      -DTC_BUILD_TESTS=OFF -DTC_BUILD_BENCHMARKS=ON
-cmake --build "${BUILD_DIR}" --target bench_tfhe -j "$(nproc)"
+echo "N=${N}  DENSITY=${DENSITY}  SEED=${SEED}  BUILD_DIR=${BUILD_DIR}"
 
 # --- Generate one graph and run the FHE benchmark once ----------------------
 echo "--- Generating graph_N${N} (density=${DENSITY}, seed=${SEED}) ---"
