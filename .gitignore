@@ -1,5 +1,5 @@
 build/
-build-wsl/
-build_gpu/
+build-*/
+build_*/
 .claude/
 InstallationLog.txt

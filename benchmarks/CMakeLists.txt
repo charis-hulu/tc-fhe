@@ -9,3 +9,12 @@ target_link_libraries(bench_tfhe PRIVATE btc)
 
 add_executable(bench_tfhe_gpu bench_tfhe_gpu.cpp)
 target_link_libraries(bench_tfhe_gpu PRIVATE btc)
+
+add_executable(bench_dghv bench_dghv.cpp)
+target_link_libraries(bench_dghv PRIVATE btc)
+
+add_executable(bench_bgv bench_bgv.cpp)
+target_link_libraries(bench_bgv PRIVATE btc)
+
+add_executable(bench_bgv_batched bench_bgv_batched.cpp)
+target_link_libraries(bench_bgv_batched PRIVATE btc)

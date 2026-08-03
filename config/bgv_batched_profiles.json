@@ -1,0 +1,33 @@
+{
+  "batch_size": 0,
+  "minimum_plaintext_modulus": 65537,
+  "openfhe_version": "BASE_OPENFHE_VERSION",
+  "profiles": [
+    {
+      "depth_capacity": 12,
+      "plaintext_modulus": 786433,
+      "ring_dimension": 32768,
+      "validated": true
+    },
+    {
+      "depth_capacity": 21,
+      "plaintext_modulus": 786433,
+      "ring_dimension": 65536,
+      "validated": true
+    },
+    {
+      "depth_capacity": 32,
+      "plaintext_modulus": 786433,
+      "ring_dimension": 131072,
+      "validated": true
+    },
+    {
+      "depth_capacity": 45,
+      "plaintext_modulus": 786433,
+      "ring_dimension": 131072,
+      "validated": true
+    }
+  ],
+  "scheme": "BGVRNS",
+  "security_level": "HEStd_128_classic"
+}

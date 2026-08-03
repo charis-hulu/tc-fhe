@@ -1,0 +1,2 @@
+add_executable(generate_bgv_batched_profiles generate_bgv_batched_profiles.cpp)
+target_link_libraries(generate_bgv_batched_profiles PRIVATE btc)
