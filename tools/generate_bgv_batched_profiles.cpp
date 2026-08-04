@@ -212,7 +212,7 @@ AttemptResult TryBuildContext(uint32_t ring_dimension, uint64_t plaintext_modulu
     try {
         result.context = bgv_batched::setup(params);
         result.outcome = AttemptOutcome::Success;
-    } catch (const lbcrypto::OpenFHEException& e) {
+    } catch (const lbcrypto::openfhe_error& e) {
         std::string msg = e.what();
         // OpenFHE's computeRingDimension "Case 3" throws exactly this
         // message shape when the manually-pinned ring dimension is below

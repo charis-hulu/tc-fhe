@@ -1,0 +1,4 @@
+timestamp,graph,N,T,ring_dimension,keygen_ms,mask_setup_ms,encrypt_ms,btc_ms,decrypt_ms,total_ms,matches_plaintext
+2026-08-04 03:27:50,graph_N16,16,16,131072,3096.29,91179.1,374.654,1.32068e+06,15.7825,1.41535e+06,YES
+2026-08-04 03:42:35,graph_N4,4,4,65536,654.386,3903.3,81.1224,13145.4,7.35389,17791.5,YES
+2026-08-04 03:45:49,graph_N8,8,8,65536,1037.09,14266.3,125.331,98144.9,8.30822,113582,YES

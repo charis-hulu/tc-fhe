@@ -6,7 +6,7 @@
     {
       "depth_capacity": 12,
       "plaintext_modulus": 786433,
-      "ring_dimension": 32768,
+      "ring_dimension": 65536,
       "validated": true
     },
     {

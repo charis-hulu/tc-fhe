@@ -9,6 +9,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <fstream>
 #include <string>
 
 namespace bgv_batched = btc::bgv_batched;
@@ -19,6 +21,13 @@ static double ms_since(clock_type::time_point t0) {
 }
 
 namespace {
+
+std::string timestamp_now() {
+    std::time_t t = std::time(nullptr);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&t));
+    return buf;
+}
 
 // Usage: bench_bgv_batched [--graph=<name>] [--T=<n>] [--profile-db=<path>]
 //
@@ -167,6 +176,19 @@ int main(int argc, char** argv) {
     std::puts("  parameter sets target comparable security -- see docs/bgv_batched.md.");
     std::puts("  Use benchmarks/bench_closure, bench_bgv, and bench_bgv_batched on the");
     std::puts("  same --graph to compare backends without modifying any source file.");
+
+    const std::string csv_path = "data/bench_bgv_batched_results.csv";
+    bool csv_exists = std::ifstream(csv_path).good();
+    std::ofstream csv(csv_path, std::ios::app);
+    if (!csv_exists) {
+        csv << "timestamp,graph,N,T,ring_dimension,keygen_ms,mask_setup_ms,encrypt_ms,btc_ms,"
+               "decrypt_ms,total_ms,matches_plaintext\n";
+    }
+    csv << timestamp_now() << ',' << args.graph_name << ',' << N << ',' << T << ','
+        << ring_dim << ',' << keygen_ms << ',' << mask_setup_ms << ',' << encrypt_ms << ','
+        << btc_ms << ',' << decrypt_ms << ','
+        << (keygen_ms + mask_setup_ms + encrypt_ms + btc_ms + decrypt_ms) << ','
+        << (ok ? "YES" : "NO") << '\n';
 
     return ok ? 0 : 1;
 }
