@@ -1,0 +1,72 @@
+#!/bin/bash
+#PBS -l select=1:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=00:45:00
+#PBS -q debug
+#PBS -A UIC-HPC
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+#PBS -o tc-fhe-bgv-distributed-rowcol-test.log
+
+# ---------------------------------------------------------------------------
+# Correctness smoke test for BGVDistributedRowColBackend (MPI + OpenMP):
+# runs test_bgv_distributed_rowcol at 1, 2, and 4 MPI ranks (default N=4,
+# T=4), all inside one PBS allocation (a single Polaris node has plenty of
+# cores for 4 ranks x a couple of OpenMP threads each at this problem size --
+# see claude_distributed_bgv_rowcol_mpi.md's "Correctness Requirements").
+#
+# Build on the login node first (compute nodes don't have cmake on PATH),
+# using the same GCC-13 compiler wrapper the row/column-packed backend
+# needed (see build_ccwrap/g++ -- OpenFHE at ~/openfhe was built with GCC
+# 11.4.0; GCC 12's default here is too strict for its headers, GCC 13 is the
+# working middle ground already established for this project):
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DTC_WITH_BGV_BATCHED=ON \
+#         -DTC_WITH_BGV_MPI=ON \
+#         -DCMAKE_PREFIX_PATH="$HOME/openfhe;$HOME/local/cmake/nlohmann_json" \
+#         -DCMAKE_CXX_COMPILER="$(pwd)/build_ccwrap/g++"
+#   cmake --build build --target test_bgv_distributed_rowcol -j "$(nproc)"
+#
+# Submit from the repo root:
+#   qsub scripts/run_polaris_bgv_distributed_rowcol_test.pbs
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+cd "${PBS_O_WORKDIR}"
+
+BUILD_DIR=${BUILD_DIR:-build}
+OPENFHE_DIR=${OPENFHE_DIR:-"$HOME/openfhe"}
+# Deliberately NOT ${OMP_NUM_THREADS:-2} -- Polaris compute nodes appear to
+# inherit OMP_NUM_THREADS=64 (one per core) from the PBS job environment by
+# default, so a `:-` default silently never applies and this backend spawns
+# 64 OpenMP threads per matmul's `#pragma omp parallel for collapse(2)`
+# region for N=4-sized work (at most 16 loop iterations) -- verified
+# empirically to make a run that otherwise finishes in ~4.5 minutes appear to
+# hang for 15+ minutes instead (thread-pool churn across many small parallel
+# regions, not a real deadlock). Force override unconditionally.
+OMP_NUM_THREADS=2
+
+echo "=== BGV-distributed-rowcol test job started on $(hostname) at $(date) ==="
+echo "BUILD_DIR=${BUILD_DIR}  OMP_NUM_THREADS=${OMP_NUM_THREADS}"
+
+export LD_LIBRARY_PATH="${OPENFHE_DIR}/lib:${LD_LIBRARY_PATH:-}"
+export OMP_NUM_THREADS
+
+for NRANKS in 1 2 4; do
+    echo ""
+    echo "--- Running test_bgv_distributed_rowcol at ${NRANKS} MPI rank(s) ---"
+    # timeout guards against a silent hang burning the whole walltime
+    # allocation without any diagnostic -- if this ever fires, exit code 124
+    # in the log tells us which rank count actually stalled, instead of a
+    # generic "walltime exceeded" kill with no indication of which of the
+    # three mpirun calls was in progress.
+    timeout 900 mpirun -n "${NRANKS}" "./${BUILD_DIR}/tests/test_bgv_distributed_rowcol"
+    status=$?
+    if [ "${status}" -ne 0 ]; then
+        echo "!!! FAILED at ${NRANKS} rank(s), exit code ${status} (124 = timeout)"
+        exit "${status}"
+    fi
+    echo "--- ${NRANKS} rank(s): PASS ---"
+done
+
+echo ""
+echo "=== BGV-distributed-rowcol test job finished at $(date) -- ALL RANK COUNTS PASSED ==="

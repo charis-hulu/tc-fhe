@@ -12,6 +12,7 @@ option(TC_WITH_TFHE_GPU    "Enable TFHE-rs GPU backend (requires CUDA)" OFF)
 option(TC_WITH_DGHV        "Enable DGHV integer-based leveled FHE backend (requires GMP)" OFF)
 option(TC_WITH_BGV         "Enable BGV leveled FHE backend via OpenFHE" OFF)
 option(TC_WITH_BGV_BATCHED "Enable BGV SIMD-batched (packed) FHE backend via OpenFHE" OFF)
+option(TC_WITH_BGV_MPI     "Enable distributed BGV row/column-packed backend (MPI+OpenMP), requires TC_WITH_BGV_BATCHED" OFF)
 
 add_subdirectory(src)
 
@@ -98,8 +99,39 @@ if(TC_WITH_BGV_BATCHED)
     # project-wide dependency.
     find_package(nlohmann_json CONFIG REQUIRED)
     target_link_libraries(btc PUBLIC nlohmann_json::nlohmann_json)
+
+    # Required by include/btc/bgv_rowcol_backend.hpp's application-level
+    # OpenMP parallelism. Linked PUBLIC (not just added as OpenFHE's own
+    # transitive -fopenmp flag) so every test/benchmark/example that links
+    # against `btc` actually gets the OpenMP compiler flag for its own
+    # translation unit -- otherwise #pragma omp in a consumer .cpp file that
+    # merely includes the header would be silently ignored (treated as an
+    # unrecognized pragma, code runs serially) since `btc` never added
+    # -fopenmp to its own compile options before this.
+    find_package(OpenMP REQUIRED)
+    target_link_libraries(btc PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
+if(TC_WITH_BGV_MPI)
+    if(NOT TC_WITH_BGV_BATCHED)
+        message(FATAL_ERROR "TC_WITH_BGV_MPI requires TC_WITH_BGV_BATCHED=ON -- the distributed "
+                             "row/column backend (include/btc/bgv_distributed_rowcol_backend.hpp) "
+                             "reuses BGVRowColBackend's dot-product/SumOR/mask primitives rather "
+                             "than re-deriving them.")
+    endif()
+
+    find_package(MPI REQUIRED COMPONENTS CXX)
+    target_link_libraries(btc PUBLIC MPI::MPI_CXX)
+    target_compile_definitions(btc PUBLIC TC_WITH_BGV_MPI)
+endif()
+
+add_subdirectory(examples)
+add_subdirectory(tools)
+
+# tools/ must be processed before tests/: test_bgv_distributed_rowcol_artifacts
+# references bgv_distributed_rowcol_artifacts's built path via
+# $<TARGET_FILE:...>, which needs that target already defined by the time
+# tests/CMakeLists.txt is parsed.
 if(TC_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
@@ -108,6 +140,3 @@ endif()
 if(TC_BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
 endif()
-
-add_subdirectory(examples)
-add_subdirectory(tools)

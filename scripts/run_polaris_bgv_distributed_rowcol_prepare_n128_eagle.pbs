@@ -1,0 +1,80 @@
+#!/bin/bash
+#PBS -l select=1:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -A UIC-HPC
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+#PBS -o tc-fhe-bgv-distributed-rowcol-prepare-n128-eagle.log
+
+# ---------------------------------------------------------------------------
+# Runs --mode=prepare for N=128 on a Polaris COMPUTE node (not the login
+# node, same rationale as the N=16/N=32/N=64 eagle prepare scripts: a
+# login-node prepare attempt for N=16 aborted after ~7s inside a
+# third-party math-library thread pool, most likely a login-node-specific
+# resource restriction tied to multiplicative depth).
+#
+# data/graph_N128.txt was generated via `python3 scripts/gen_graph.py 128`
+# (default density=0.2, seed=2024, matching every other graph_N*.txt in
+# this project -- it didn't exist before this script was written).
+#
+# N=128's required depth is the highest yet -- via
+# EstimateBGVRowColDepth(N,T) in bgv_rowcol_backend.hpp:
+#   N=16,T=16  -> depth 44 (confirmed, graph_n16's manifest.json)
+#   N=32,T=32  -> depth 65 (confirmed, graph_n32's manifest.json)
+#   N=64,T=64  -> depth 90 (confirmed, graph_n64's manifest.json -- still
+#                 ring_dimension=131072, same as N=16/N=32)
+#   N=128,T=128 -> depth 119
+# Whether 131072 still suffices at depth 119 is unknown until this actually
+# runs; if not, OpenFHE will auto-select a larger ring dimension, meaning
+# bigger keys/ciphertexts and a longer keygen than N=64's (whose own
+# prepare_encryption_time_ms was already ~181s). Walltime is set to
+# 01:00:00 (this queue's max) to leave headroom either way.
+#
+# Storing under /eagle/UIC-HPC/chulu instead of this repo's own artifacts/
+# (project storage, not home) -- same as N=4/N=8/N=16/N=32/N=64 -- because
+# $HOME is already over its 45G quota.
+#
+# Build first on the login node (compute nodes don't have cmake on PATH):
+#   source set_env.sh && module load cudatoolkit-standalone
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DTC_WITH_BGV_BATCHED=ON \
+#         -DTC_WITH_BGV_MPI=ON \
+#         -DCMAKE_PREFIX_PATH="$HOME/openfhe;$HOME/local/cmake/nlohmann_json" \
+#         -DCMAKE_CXX_COMPILER="$(pwd)/build_ccwrap/g++"
+#   cmake --build build --target bgv_distributed_rowcol_artifacts -j "$(nproc)"
+#
+# Submit from the repo root:
+#   qsub scripts/run_polaris_bgv_distributed_rowcol_prepare_n128_eagle.pbs
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+cd "${PBS_O_WORKDIR}"
+
+BUILD_DIR=${BUILD_DIR:-build}
+OPENFHE_DIR=${OPENFHE_DIR:-"$HOME/openfhe"}
+OMP_NUM_THREADS=2
+ARTIFACT_DIR=/eagle/UIC-HPC/chulu/artifacts/graph_n128
+
+echo "=== BGV-distributed-rowcol prepare(N=128 -> eagle) job started on $(hostname) at $(date) ==="
+echo "BUILD_DIR=${BUILD_DIR}  OMP_NUM_THREADS=${OMP_NUM_THREADS}  ARTIFACT_DIR=${ARTIFACT_DIR}"
+
+export LD_LIBRARY_PATH="${OPENFHE_DIR}/lib:${LD_LIBRARY_PATH:-}"
+export OMP_NUM_THREADS
+
+mkdir -p "${ARTIFACT_DIR}"
+
+# 3300s (55min), not the full 3600s walltime above, so this fires with a
+# clear "timed out" message a few minutes before PBS's own walltime kill
+# would just cut the job dead with no diagnostic.
+timeout 3300 "./${BUILD_DIR}/tools/bgv_distributed_rowcol_artifacts" \
+    --mode=prepare --input=data/graph_N128.txt --artifact-dir="${ARTIFACT_DIR}" --T=128
+status=$?
+
+if [ "${status}" -ne 0 ]; then
+    echo "!!! FAILED, exit code ${status} (124 = timeout)"
+    exit "${status}"
+fi
+
+echo ""
+echo "=== BGV-distributed-rowcol prepare(N=128 -> eagle) job finished at $(date) -- PASSED ==="

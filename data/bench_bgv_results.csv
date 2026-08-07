@@ -1,0 +1,3 @@
+timestamp,graph,N,T,ring_dimension,keygen_ms,encrypt_ms,btc_ms,decrypt_ms,total_ms,matches_plaintext
+2026-08-04 20:14:26,graph_N4,4,4,32768,241.653,637.401,21484.6,38.296,22402,YES
+2026-08-04 20:34:18,graph_N8,8,8,65536,783.589,8192.61,643868,289.574,653134,YES

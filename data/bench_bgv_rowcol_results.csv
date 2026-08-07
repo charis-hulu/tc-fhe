@@ -1,0 +1,5 @@
+timestamp,graph,N,T,variant,requested_threads,omp_max_threads,ring_dimension,multiplicative_depth,keygen_ms,mask_setup_ms,encrypt_ms,btc_ms,decrypt_ms,total_ms,peak_rss_kb,dot_products,sumor_calls,cc_mult,cp_mult,add,sub,rotate,matches_plaintext
+2026-08-06 03:24:42,graph_N4,4,4,openmp-twopass,32,32,65536,14,744.374,1506.91,887.63,65423.6,37.3209,68599.9,1383108,128,128,400,384,656,272,512,YES
+2026-08-06 03:53:58,graph_N4,4,4,openmp-twopass,32,32,65536,14,758.637,1537.17,900.581,66491.5,33.1766,69721,1360656,128,128,400,384,656,272,512,YES
+2026-08-06 03:55:08,graph_N4,4,4,openmp-optimized,32,32,65536,14,758.375,1535.26,912.459,41803.5,37.8045,45047.4,1448612,64,64,208,256,912,144,256,YES
+2026-08-06 09:07:04,graph_N4,4,4,serial,0,4,65536,14,1725.73,3434.65,2086.51,4.61629e+07,88.8908,4.61703e+07,905292,64,64,208,256,400,144,256,YES

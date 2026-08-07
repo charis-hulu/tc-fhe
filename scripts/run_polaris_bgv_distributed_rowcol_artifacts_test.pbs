@@ -1,0 +1,64 @@
+#!/bin/bash
+#PBS -l select=1:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=00:45:00
+#PBS -q debug
+#PBS -A UIC-HPC
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+#PBS -o tc-fhe-bgv-distributed-rowcol-artifacts-test.log
+
+# ---------------------------------------------------------------------------
+# Integration test for the offline key-generation/ciphertext-serialization
+# workflow (include/btc/bgv_distributed_rowcol_artifacts.hpp,
+# tools/bgv_distributed_rowcol_artifacts.cpp): runs
+# test_bgv_distributed_rowcol_artifacts, which itself shells out to the
+# built CLI tool for prepare/compute/decrypt as three SEPARATE OS processes
+# (compute launched via `mpirun -n {1,4}`), verifying the decrypted result
+# matches the plaintext bounded_transitive_closure reference at each rank
+# count -- see that test's header comment.
+#
+# Build on the login node first (compute nodes don't have cmake on PATH),
+# same GCC-13 wrapper the rest of the BGV-MPI backend needs:
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DTC_WITH_BGV_BATCHED=ON \
+#         -DTC_WITH_BGV_MPI=ON \
+#         -DCMAKE_PREFIX_PATH="$HOME/openfhe;$HOME/local/cmake/nlohmann_json" \
+#         -DCMAKE_CXX_COMPILER="$(pwd)/build_ccwrap/g++"
+#   cmake --build build --target test_bgv_distributed_rowcol_artifacts -j "$(nproc)"
+#
+# Submit from the repo root:
+#   qsub scripts/run_polaris_bgv_distributed_rowcol_artifacts_test.pbs
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+cd "${PBS_O_WORKDIR}"
+
+BUILD_DIR=${BUILD_DIR:-build}
+OPENFHE_DIR=${OPENFHE_DIR:-"$HOME/openfhe"}
+# See run_polaris_bgv_distributed_rowcol_test.pbs's comment on why this must
+# be an unconditional override, not `${OMP_NUM_THREADS:-2}` -- the same
+# hazard applies here (the compute-mode child processes this test spawns via
+# mpirun hit the exact same BGVDistributedRowColBackend matmul code path).
+OMP_NUM_THREADS=2
+
+echo "=== BGV-distributed-rowcol-artifacts test job started on $(hostname) at $(date) ==="
+echo "BUILD_DIR=${BUILD_DIR}  OMP_NUM_THREADS=${OMP_NUM_THREADS}"
+
+export LD_LIBRARY_PATH="${OPENFHE_DIR}/lib:${LD_LIBRARY_PATH:-}"
+export OMP_NUM_THREADS
+
+# test_bgv_distributed_rowcol_artifacts itself shells out to `mpirun` for
+# its compute stage (see RunPipeline in that file) -- the exported
+# LD_LIBRARY_PATH/OMP_NUM_THREADS above are inherited by those child
+# processes automatically (std::system() spawns a shell that inherits this
+# process's environment).
+timeout 1200 "./${BUILD_DIR}/tests/test_bgv_distributed_rowcol_artifacts"
+status=$?
+
+if [ "${status}" -ne 0 ]; then
+    echo "!!! FAILED, exit code ${status} (124 = timeout)"
+    exit "${status}"
+fi
+
+echo ""
+echo "=== BGV-distributed-rowcol-artifacts test job finished at $(date) -- PASSED ==="

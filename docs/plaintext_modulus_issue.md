@@ -164,13 +164,65 @@ ring dimension.
 
 ---
 
+## Second occurrence: the bgv-rowcol backend (row/column-packed, OpenMP)
+
+The identical failure mode recurred while building a third backend,
+`include/btc/bgv_rowcol_backend.hpp` (see `docs/bgv_rowcol.md`) — same root
+cause as above, different trigger size. There, `N=4, T=4` (not `N=8, T=8`)
+was enough to break the default `t=65537`:
+
+```
+BGVRowColMatmulDepth(4) = 2 + 2*ceil(log2 4) = 6
+EstimateBGVRowColDepth(4, 4) = 2 * (6 + 1) = 14   -- OpenFHE picks n=65536
+65536 is NOT <= 32768 (65537's compatibility limit) -> same crash
+```
+
+This backend's depth grows **roughly twice as fast in N** as the packed
+whole-matrix backend's (`bgv_batched_backend.hpp`), because its `SumOR`
+reduction needs an extra ciphertext-plaintext re-mask per rotation step on
+top of the OR itself (see `docs/bgv_rowcol.md` §3-4) — so it runs into this
+same wall at smaller N/T than the original backend did.
+
+**Fix applied (not the principled one below):** reused `t = 786433`, the
+same prime the original N=8 workaround above already validated, rather than
+deriving a new one. This isn't a coincidence-free choice — `786433 = 3*2^18
++ 1`, so `t - 1 = 786432 = 2^18 * 3` is divisible by `2*n` for *any*
+power-of-two `n` up to `131072`, which happens to cover every ring
+dimension this backend needed for `N <= 8`. It was picked because it was
+already sitting in this codebase, proven to work, not because it was
+independently derived as correct or minimal for this circuit.
+
+**Directly answering "is 786433 the only choice, can't we use something
+smaller?": no.** Any prime `t` with `(t-1) mod (2*n) == 0` works for a given
+ring dimension `n`; there are infinitely many, and smaller ones exist. The
+catch is that a smaller `t` is only NTT-compatible up to a smaller ceiling
+on `n` (e.g. the default `65537 = 2^16+1` only reaches `n <= 32768`, which
+is exactly why it broke here at `n=65536`). `786433` isn't special beyond
+having a conveniently large power-of-two factor in `t-1` (`2^18`), which
+buys compatibility across a wide range of `n` in one shot -- avoiding
+having to pick a *different*, smaller-but-narrower-range prime for every
+distinct `(N, T)` combination tested. It is a reused shortcut, not a proof
+of sufficiency.
+
+**Where this will break again:** for `N` large enough that this backend's
+faster-growing depth pushes the auto-selected ring dimension past `131072`
+(plausibly around `N=16` or `N=32`, untested), `786433` fails the exact same
+way `65537` did at `N=4`. The proposed `FirstPrime`-based fix below applies
+equally to this backend and was not implemented here either -- this backend
+has no `setup_from_profile`-equivalent (its `batch_size == N` requirement is
+incompatible with the existing profile database's `batch_size == 0`
+convention, see `docs/bgv_rowcol.md` §7), so it currently has *no* principled
+parameter-selection path at all, only this one hardcoded, empirically-tested-
+for-N<=8 prime.
+
 ## Instructions for ChatGPT
 
 Please:
 
 1. Independently analyze the problem described above (the BGV plaintext
-   modulus vs. ring dimension NTT-compatibility issue) -- confirm or
-   correct the root-cause explanation.
+   modulus vs. ring dimension NTT-compatibility issue, including its second
+   occurrence in the bgv-rowcol backend) -- confirm or correct the
+   root-cause explanation.
 2. Propose your own solution (it is fine if it ends up being the same as
    the one proposed above).
 3. Critique the proposed `FirstPrime`-based solution above specifically,

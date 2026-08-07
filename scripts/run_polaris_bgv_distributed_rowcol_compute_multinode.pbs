@@ -1,0 +1,138 @@
+#!/bin/bash
+#PBS -l select=2:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=01:00:00
+#PBS -q debug
+#PBS -A UIC-HPC
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+#PBS -o tc-fhe-bgv-distributed-rowcol-compute-multinode.log
+
+# ---------------------------------------------------------------------------
+# Runs --mode=compute for BGVDistributedRowColBackend across MULTIPLE Polaris
+# compute nodes, with rank count / ranks-per-node / threads-per-rank all
+# configurable via env vars (defaults below match the N=8 ask: 2 nodes x 2
+# ranks/node = 4 ranks total, 16 OpenMP threads per rank -- Polaris compute
+# nodes are single-socket 32-core/64-thread AMD EPYC Milan, so 2 ranks x 16
+# threads = 32 threads/node fits comfortably within one node's hardware
+# threads).
+#
+# Requires a prior --mode=prepare run in ARTIFACT_DIR (this script only runs
+# compute). For N=8, /eagle/UIC-HPC/chulu/artifacts/graph_n8 already has a
+# completed prepare (see run_polaris_bgv_distributed_rowcol_prepare_eagle.pbs).
+#
+# --- Configuration (override via env before qsub, e.g. `qsub -v NRANKS=8,...`) ---
+#   ARTIFACT_DIR             artifact directory from a completed prepare run
+#                            (default: /eagle/UIC-HPC/chulu/artifacts/graph_n8)
+#   NRANKS                   total MPI ranks                   (default: 4)
+#   RANKS_PER_NODE           MPI ranks per node (--ppn)         (default: 2)
+#   THREADS_PER_RANK         OpenMP threads per rank (--depth)  (default: 16)
+#   TC_OMP_MAX_ACTIVE_LEVELS nested-OpenMP cap -- see GetConfiguredMaxActiveLevels
+#                            in bgv_rowcol_backend.hpp. 1 = no nesting (default,
+#                            matches the code's own default). 2 = allow one level
+#                            of nesting; only makes sense paired with a lower
+#                            THREADS_PER_RANK -- see that function's doc comment,
+#                            oversubscription is bounded by a node's physical
+#                            core count, not by rank/node count.
+#
+# NOTE: the number of PBS nodes is fixed by `#PBS -l select=2` above (a PBS
+# directive, evaluated before this script runs -- env vars can't reach it).
+# To change node count, edit that line directly or pass
+# `qsub -l select=<N> scripts/run_polaris_bgv_distributed_rowcol_compute_multinode.pbs`,
+# and make sure NRANKS = <N> * RANKS_PER_NODE stays consistent.
+#
+# Build first on the login node (compute nodes don't have cmake on PATH):
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DTC_WITH_BGV_BATCHED=ON \
+#         -DTC_WITH_BGV_MPI=ON \
+#         -DCMAKE_PREFIX_PATH="$HOME/openfhe;$HOME/local/cmake/nlohmann_json" \
+#         -DCMAKE_CXX_COMPILER="$(pwd)/build_ccwrap/g++"
+#   cmake --build build --target bgv_distributed_rowcol_artifacts -j "$(nproc)"
+#
+# Submit from the repo root (defaults = N=8, 2 nodes x 2 ranks, 16 threads/rank):
+#   qsub scripts/run_polaris_bgv_distributed_rowcol_compute_multinode.pbs
+#
+# Override example (still 2 PBS nodes, but 4 ranks/node x 8 threads/rank):
+#   qsub -v RANKS_PER_NODE=4,THREADS_PER_RANK=8 \
+#       scripts/run_polaris_bgv_distributed_rowcol_compute_multinode.pbs
+#
+# The runtime_*_ms lines RunComputeBody() prints (see
+# tools/bgv_distributed_rowcol_artifacts.cpp) are grepped back out of this
+# run's own output and appended as one row to
+# data/bench_bgv_distributed_rowcol_results.csv, same convention as
+# data/bench_bgv_results.csv / data/bench_bgv_rowcol_results.csv.
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+cd "${PBS_O_WORKDIR}"
+
+BUILD_DIR=${BUILD_DIR:-build}
+OPENFHE_DIR=${OPENFHE_DIR:-"$HOME/openfhe"}
+ARTIFACT_DIR=${ARTIFACT_DIR:-/eagle/UIC-HPC/chulu/artifacts/graph_n8}
+NRANKS=${NRANKS:-4}
+RANKS_PER_NODE=${RANKS_PER_NODE:-2}
+THREADS_PER_RANK=${THREADS_PER_RANK:-16}
+TC_OMP_MAX_ACTIVE_LEVELS=${TC_OMP_MAX_ACTIVE_LEVELS:-1}
+
+NUM_NODES=$(sort -u "${PBS_NODEFILE}" | wc -l)
+EXPECTED_RANKS=$((NUM_NODES * RANKS_PER_NODE))
+
+echo "=== BGV-distributed-rowcol compute(multi-node) job started on $(hostname) at $(date) ==="
+echo "ARTIFACT_DIR=${ARTIFACT_DIR}"
+echo "PBS nodes=${NUM_NODES}  NRANKS=${NRANKS}  RANKS_PER_NODE=${RANKS_PER_NODE}  THREADS_PER_RANK=${THREADS_PER_RANK}  TC_OMP_MAX_ACTIVE_LEVELS=${TC_OMP_MAX_ACTIVE_LEVELS}"
+
+if [ "${NRANKS}" -ne "${EXPECTED_RANKS}" ]; then
+    echo "!!! NRANKS (${NRANKS}) != PBS nodes (${NUM_NODES}) * RANKS_PER_NODE (${RANKS_PER_NODE}) = ${EXPECTED_RANKS}"
+    echo "!!! fix the mismatch (adjust env vars or #PBS -l select=) before resubmitting"
+    exit 1
+fi
+
+export LD_LIBRARY_PATH="${OPENFHE_DIR}/lib:${LD_LIBRARY_PATH:-}"
+export OMP_NUM_THREADS="${THREADS_PER_RANK}"
+export TC_OMP_MAX_ACTIVE_LEVELS
+
+# Own copy of stdout+stderr, separate from the #PBS -o log, purely so the
+# runtime_*_ms lines below can be grepped back out inside this same job --
+# PBS's -o file isn't guaranteed readable until the job exits.
+RUN_LOG=$(mktemp)
+
+# timeout guards against a silent hang burning the whole walltime allocation
+# without any diagnostic -- exit code 124 in the log means it stalled rather
+# than failed outright. PIPESTATUS[0], not $?, since $? after a `| tee` would
+# be tee's exit code. 3300s (55min), not the full 3600s walltime above, so
+# this fires with a clear "timed out" message a few minutes before PBS's own
+# walltime kill would just cut the job dead with no diagnostic.
+timeout 3300 mpirun -n "${NRANKS}" --ppn "${RANKS_PER_NODE}" --depth "${THREADS_PER_RANK}" --cpu-bind depth \
+    "./${BUILD_DIR}/tools/bgv_distributed_rowcol_artifacts" --mode=compute --artifact-dir="${ARTIFACT_DIR}" \
+    2>&1 | tee "${RUN_LOG}"
+status=${PIPESTATUS[0]}
+
+if [ "${status}" -ne 0 ]; then
+    echo "!!! FAILED, exit code ${status} (124 = timeout)"
+    rm -f "${RUN_LOG}"
+    exit "${status}"
+fi
+
+# --- extract the runtime_*_ms lines RunComputeBody printed and append a row
+# to a CSV, same convention as data/bench_bgv_results.csv /
+# data/bench_bgv_rowcol_results.csv (see docs/bgv_rowcol.md).
+MATRIX_SIZE=$(grep -oP '"matrix_size":\s*\K[0-9]+' "${ARTIFACT_DIR}/manifest.json")
+CONTEXT_LOAD_MS=$(grep -oP 'runtime_context_load_time_ms=\K[0-9.eE+-]+' "${RUN_LOG}" | tail -1)
+EVAL_KEY_LOAD_MS=$(grep -oP 'runtime_eval_key_load_time_ms=\K[0-9.eE+-]+' "${RUN_LOG}" | tail -1)
+CIPHERTEXT_LOAD_MS=$(grep -oP 'runtime_ciphertext_load_time_ms=\K[0-9.eE+-]+' "${RUN_LOG}" | tail -1)
+COMPUTE_MS=$(grep -oP 'runtime_compute_time_ms=\K[0-9.eE+-]+' "${RUN_LOG}" | tail -1)
+RESULT_SAVE_MS=$(grep -oP 'runtime_result_save_time_ms=\K[0-9.eE+-]+' "${RUN_LOG}" | tail -1)
+E2E_MS=$(grep -oP 'online_end_to_end_time_ms=\K[0-9.eE+-]+' "${RUN_LOG}" | tail -1)
+rm -f "${RUN_LOG}"
+
+CSV_FILE="data/bench_bgv_distributed_rowcol_results.csv"
+if [ ! -f "${CSV_FILE}" ]; then
+    echo "timestamp,artifact_dir,matrix_size,world_size,ranks_per_node,threads_per_rank,omp_max_active_levels,context_load_ms,eval_key_load_ms,ciphertext_load_ms,compute_ms,result_save_ms,online_end_to_end_ms" \
+        > "${CSV_FILE}"
+fi
+echo "$(date '+%Y-%m-%d %H:%M:%S'),${ARTIFACT_DIR},${MATRIX_SIZE},${NRANKS},${RANKS_PER_NODE},${THREADS_PER_RANK},${TC_OMP_MAX_ACTIVE_LEVELS},${CONTEXT_LOAD_MS},${EVAL_KEY_LOAD_MS},${CIPHERTEXT_LOAD_MS},${COMPUTE_MS},${RESULT_SAVE_MS},${E2E_MS}" \
+    >> "${CSV_FILE}"
+echo ""
+echo "=== timings appended to ${CSV_FILE} ==="
+
+echo ""
+echo "=== BGV-distributed-rowcol compute(multi-node) job finished at $(date) -- PASSED ==="

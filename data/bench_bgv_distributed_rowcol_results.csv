@@ -1,0 +1,5 @@
+timestamp,artifact_dir,matrix_size,world_size,ranks_per_node,threads_per_rank,omp_max_active_levels,context_load_ms,eval_key_load_ms,ciphertext_load_ms,compute_ms,result_save_ms,online_end_to_end_ms
+2026-08-06 19:22:22,/eagle/UIC-HPC/chulu/artifacts/graph_n8,8,4,2,16,1,787.18,2296.10,7137.67,120842.86,2671.14,133734.94
+2026-08-06 20:10:42,/eagle/UIC-HPC/chulu/artifacts/graph_n16,16,16,4,8,1,1101.47,3933.00,3877.58,458292.59,20261.85,487466.48
+2026-08-06 22:04:20,/eagle/UIC-HPC/chulu/artifacts/graph_n32,32,1024,32,1,1,2847.40,24344.29,7793.37,798048.05,563732.45,1396765.56
+2026-08-07 15:22:51,/eagle/UIC-HPC/chulu/artifacts/graph_n4,4,1,1,1,1,2004.58,1075.18,9312.74,129534.86,27.74,141955.10

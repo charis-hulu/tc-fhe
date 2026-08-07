@@ -1,0 +1,89 @@
+#!/bin/bash
+#PBS -l select=1:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=00:15:00
+#PBS -q debug
+#PBS -A UIC-HPC
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+#PBS -o tc-fhe-bgv-rowcol-test.log
+
+# ---------------------------------------------------------------------------
+# Quick smoke test for the bgv-rowcol (OpenFHE, row/column-packed) backend:
+# 1 Polaris node, debug queue, a single power-of-two graph size (default N=4,
+# T=N, variant=openmp-twopass).
+# Runs bench_bgv_rowcol, so results also get appended to
+# data/bench_bgv_rowcol_results.csv.
+#
+# Build on the login node first (compute nodes don't have cmake on PATH):
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DTC_WITH_BGV_BATCHED=ON \
+#         -DCMAKE_PREFIX_PATH=/path/to/openfhe-install
+#   cmake --build build --target bench_bgv_rowcol -j "$(nproc)"
+# (see README.md "With BGV (OpenFHE)")
+#
+# Submit from the repo root:
+#   qsub scripts/run_polaris_bgv_rowcol_test.pbs
+#
+# Override the test size / variant / thread count via qsub -v, e.g.:
+#   qsub -v N=8,T=8,VARIANT=openmp-optimized,THREADS=4 scripts/run_polaris_bgv_rowcol_test.pbs
+#
+# N MUST be a power of two (4, 8, 16, 32, 64, ...) -- this backend has no
+# padding for other sizes (see include/btc/bgv_rowcol_backend.hpp's
+# IsPowerOfTwo requirement). graph_N4/graph_N8/graph_N16/graph_N32/graph_N64
+# already exist in data/; other power-of-two sizes are generated on the fly.
+#
+# VARIANT selects the matmul implementation (serial | openmp-twopass |
+# openmp-optimized, default openmp-twopass -- see bgv_rowcol_backend.hpp's
+# BGVMatMulBackend). THREADS=1 with an openmp-* variant isolates "speedup
+# from row/column packing" from "speedup from OpenMP parallelism"; run the
+# same graph at THREADS=1,2,4,8 to see the split.
+#
+# The default plaintext modulus here (786433, not 65537) matches
+# bench_bgv_rowcol.cpp's own default: this backend's SumOR re-mask roughly
+# doubles multiplicative depth vs. the other BGV backends, pushing the
+# automatically-chosen ring dimension past where 65537 stays
+# NTT-compatible -- see docs/plaintext_modulus_issue.md.
+#
+# The 15-minute walltime above only covers the default N=4 smoke test.
+# Larger N roughly doubles the ring dimension per depth jump, which makes
+# every homomorphic op much slower. Override walltime on the qsub command
+# line for bigger runs, e.g.:
+#   qsub -l walltime=01:00:00 -v N=8,T=8 scripts/run_polaris_bgv_rowcol_test.pbs
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+cd "${PBS_O_WORKDIR}"
+
+N=${N:-4}
+T=${T:-${N}}
+VARIANT=${VARIANT:-openmp-twopass}
+THREADS=${THREADS:-0}
+DENSITY=${DENSITY:-0.2}
+SEED=${SEED:-2024}
+BUILD_DIR=${BUILD_DIR:-build}
+OPENFHE_DIR=${OPENFHE_DIR:-"$HOME/openfhe"}
+# OpenFHE spawns one OpenMP thread per core by default; on a shared node
+# with a high core count this can blow past the pthread limit and abort
+# with "pthread_create ... value 11" before printing anything. Cap it
+# unless the caller explicitly asked for a THREADS count via --threads
+# (bench_bgv_rowcol.cpp itself calls omp_set_num_threads(THREADS) when
+# --threads > 0, overriding this env var).
+OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
+
+echo "=== BGV-rowcol test job started on $(hostname) at $(date) ==="
+echo "N=${N}  T=${T}  VARIANT=${VARIANT}  THREADS=${THREADS}  DENSITY=${DENSITY}  SEED=${SEED}"
+echo "BUILD_DIR=${BUILD_DIR}  OMP_NUM_THREADS=${OMP_NUM_THREADS}"
+
+export LD_LIBRARY_PATH="${OPENFHE_DIR}/lib:${LD_LIBRARY_PATH:-}"
+export OMP_NUM_THREADS
+
+# --- Generate one graph and run the FHE closure once ------------------------
+echo "--- Generating graph_N${N} (density=${DENSITY}, seed=${SEED}) ---"
+python3 scripts/gen_graph.py "${N}" --density "${DENSITY}" --seed "${SEED}" --out-dir data
+
+echo "--- Running bench_bgv_rowcol for N=${N}, T=${T}, variant=${VARIANT}, threads=${THREADS} ---"
+"./${BUILD_DIR}/benchmarks/bench_bgv_rowcol" --graph="graph_N${N}" --T="${T}" \
+    --variant="${VARIANT}" --threads="${THREADS}"
+
+echo "=== BGV-rowcol test job finished at $(date) ==="
+echo "Results appended to data/bench_bgv_rowcol_results.csv"

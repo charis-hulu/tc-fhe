@@ -1,0 +1,73 @@
+#!/bin/bash
+#PBS -l select=1:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=00:45:00
+#PBS -q debug
+#PBS -A UIC-HPC
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+#PBS -o tc-fhe-bgv-distributed-rowcol-prepare-eagle.log
+
+# ---------------------------------------------------------------------------
+# Runs --mode=prepare for N=4 and N=8, storing the artifact directories under
+# /eagle/UIC-HPC/chulu instead of this repo's own artifacts/ (project
+# storage, not home) -- run on a Polaris COMPUTE node (not the login node)
+# per the user's request; --mode=prepare never calls MPI_Init, so this is
+# purely about getting compute-node-class resources/isolation, same
+# rationale as run_polaris_bgv_distributed_rowcol_prepare_n16.pbs (a
+# login-node prepare attempt for N=16 aborted inside a third-party math
+# library's thread pool, most likely a login-node-specific resource
+# restriction).
+#
+# Build first on the login node (compute nodes don't have cmake on PATH):
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DTC_WITH_BGV_BATCHED=ON \
+#         -DTC_WITH_BGV_MPI=ON \
+#         -DCMAKE_PREFIX_PATH="$HOME/openfhe;$HOME/local/cmake/nlohmann_json" \
+#         -DCMAKE_CXX_COMPILER="$(pwd)/build_ccwrap/g++"
+#   cmake --build build --target bgv_distributed_rowcol_artifacts -j "$(nproc)"
+#
+# Submit from the repo root:
+#   qsub scripts/run_polaris_bgv_distributed_rowcol_prepare_eagle.pbs
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+cd "${PBS_O_WORKDIR}"
+
+BUILD_DIR=${BUILD_DIR:-build}
+OPENFHE_DIR=${OPENFHE_DIR:-"$HOME/openfhe"}
+OMP_NUM_THREADS=2
+EAGLE_ROOT=/eagle/UIC-HPC/chulu/artifacts
+
+echo "=== BGV-distributed-rowcol prepare(N=4,N=8 -> eagle) job started on $(hostname) at $(date) ==="
+echo "BUILD_DIR=${BUILD_DIR}  OMP_NUM_THREADS=${OMP_NUM_THREADS}  EAGLE_ROOT=${EAGLE_ROOT}"
+
+export LD_LIBRARY_PATH="${OPENFHE_DIR}/lib:${LD_LIBRARY_PATH:-}"
+export OMP_NUM_THREADS
+
+mkdir -p "${EAGLE_ROOT}"
+
+overall_status=0
+for spec in "4:${EAGLE_ROOT}/graph_n4" "8:${EAGLE_ROOT}/graph_n8"; do
+    n="${spec%%:*}"
+    artifact_dir="${spec#*:}"
+    echo ""
+    echo "--- prepare N=${n} -> ${artifact_dir} ---"
+    timeout 1800 "./${BUILD_DIR}/tools/bgv_distributed_rowcol_artifacts" \
+        --mode=prepare --input="data/graph_N${n}.txt" --artifact-dir="${artifact_dir}" --T="${n}"
+    status=$?
+    if [ "${status}" -ne 0 ]; then
+        echo "!!! FAILED at N=${n}, exit code ${status} (124 = timeout)"
+        overall_status="${status}"
+    else
+        echo "--- N=${n}: PASS ---"
+    fi
+done
+
+if [ "${overall_status}" -ne 0 ]; then
+    echo ""
+    echo "=== job finished at $(date) -- AT LEAST ONE N FAILED ==="
+    exit "${overall_status}"
+fi
+
+echo ""
+echo "=== BGV-distributed-rowcol prepare(N=4,N=8 -> eagle) job finished at $(date) -- ALL PASSED ==="

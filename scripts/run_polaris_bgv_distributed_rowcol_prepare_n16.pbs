@@ -1,0 +1,55 @@
+#!/bin/bash
+#PBS -l select=1:system=polaris
+#PBS -l place=scatter
+#PBS -l walltime=00:45:00
+#PBS -q debug
+#PBS -A UIC-HPC
+#PBS -l filesystems=home:eagle
+#PBS -j oe
+#PBS -o tc-fhe-bgv-distributed-rowcol-prepare-n16.log
+
+# ---------------------------------------------------------------------------
+# Runs --mode=prepare for N=16 on a Polaris compute node instead of the
+# login node -- a login-node attempt aborted after ~7s inside a third-party
+# math-library thread pool (hxOSCreateHostThread / createSlaveThreads, not
+# OpenFHE or this project's own code), most likely a login-node-specific
+# resource restriction hit by the much larger ring dimension N=16's
+# multiplicative depth (44) requires versus N=8's (27, which succeeded
+# directly on the login node). No MPI involved -- --mode=prepare never calls
+# MPI_Init -- this is purely about getting compute-node-class resources.
+#
+# Build first on the login node (compute nodes don't have cmake on PATH):
+#   cmake -B build -DCMAKE_BUILD_TYPE=Release -DTC_WITH_BGV_BATCHED=ON \
+#         -DTC_WITH_BGV_MPI=ON \
+#         -DCMAKE_PREFIX_PATH="$HOME/openfhe;$HOME/local/cmake/nlohmann_json" \
+#         -DCMAKE_CXX_COMPILER="$(pwd)/build_ccwrap/g++"
+#   cmake --build build --target bgv_distributed_rowcol_artifacts -j "$(nproc)"
+#
+# Submit from the repo root:
+#   qsub scripts/run_polaris_bgv_distributed_rowcol_prepare_n16.pbs
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+cd "${PBS_O_WORKDIR}"
+
+BUILD_DIR=${BUILD_DIR:-build}
+OPENFHE_DIR=${OPENFHE_DIR:-"$HOME/openfhe"}
+OMP_NUM_THREADS=2
+
+echo "=== BGV-distributed-rowcol prepare(N=16) job started on $(hostname) at $(date) ==="
+echo "BUILD_DIR=${BUILD_DIR}  OMP_NUM_THREADS=${OMP_NUM_THREADS}"
+
+export LD_LIBRARY_PATH="${OPENFHE_DIR}/lib:${LD_LIBRARY_PATH:-}"
+export OMP_NUM_THREADS
+
+timeout 1800 "./${BUILD_DIR}/tools/bgv_distributed_rowcol_artifacts" \
+    --mode=prepare --input=data/graph_N16.txt --artifact-dir=artifacts/graph_n16 --T=16
+status=$?
+
+if [ "${status}" -ne 0 ]; then
+    echo "!!! FAILED, exit code ${status} (124 = timeout)"
+    exit "${status}"
+fi
+
+echo ""
+echo "=== BGV-distributed-rowcol prepare(N=16) job finished at $(date) -- PASSED ==="
